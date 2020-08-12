@@ -270,14 +270,66 @@ def database_credentials(request, context, database):
             database_configure_ssl(request, context, database)
         elif 'retry_setup_ssl' in request.POST:
             database_configure_ssl_retry(request, context, database)
+        elif 'set_ssl_required' in request.POST:
+            database_set_ssl_required(request, context, database)
+        elif 'retry_set_ssl_required' in request.POST:
+            database_set_ssl_required_retry(request, context, database)
+        elif 'set_ssl_not_required' in request.POST:
+            database_set_ssl_not_required(request, context, database)
+        elif 'retry_set_ssl_not_required' in request.POST:
+            database_set_ssl_not_required_retry(request, context, database)
+
+    infra = database.infra
+
+    print request.POST
 
     context['can_setup_ssl'] = \
-        (not database.infra.ssl_configured) and \
-        database.infra.plan.replication_topology.can_setup_ssl and \
+        (not infra.ssl_configured) and \
+        infra.plan.replication_topology.can_setup_ssl and \
         request.user.has_perm(constants.PERM_CONFIGURE_SSL)
 
     last_configure_ssl = database.configure_ssl.last()
     context['last_configure_ssl'] = last_configure_ssl
+
+    set_ssl_mode_retry_in_progress = False
+
+    can_set_ssl_required_retry = False
+    last_set_ssl_required = database.set_require_ssl.last()
+    if last_set_ssl_required:
+        if not last_set_ssl_required.is_status_success:
+            set_ssl_mode_retry_in_progress = True
+        if last_set_ssl_required.is_status_error:
+            can_set_ssl_required_retry = True
+
+    can_set_ssl_not_required_retry = False
+    last_set_ssl_not_required = database.set_not_require_ssl.last()
+    if last_set_ssl_not_required:
+        if not last_set_ssl_not_required.is_status_success:
+            set_ssl_mode_retry_in_progress = True
+        if last_set_ssl_not_required.is_status_error:
+            can_set_ssl_not_required_retry = True
+
+    can_set_ssl_required = \
+        (infra.plan.replication_topology.can_setup_ssl and \
+        infra.ssl_configured and \
+        infra.set_require_ssl_for_databaseinfra and \
+        infra.ssl_mode == infra.ALLOWTLS and \
+        not set_ssl_mode_retry_in_progress)
+
+    can_set_ssl_not_required = \
+        (infra.plan.replication_topology.can_setup_ssl and \
+        infra.ssl_configured and \
+        infra.set_require_ssl_for_databaseinfra and \
+        infra.ssl_mode == infra.REQUIRETLS and \
+        not set_ssl_mode_retry_in_progress)
+
+
+    context['can_set_ssl_required'] = can_set_ssl_required
+    context['can_set_ssl_not_required'] = can_set_ssl_not_required
+    context['can_set_ssl_required_retry'] = can_set_ssl_required_retry
+    context['can_set_ssl_not_required_retry'] = can_set_ssl_not_required_retry
+    context['last_set_ssl_required'] = last_set_ssl_required
+    context['last_set_ssl_not_required'] = last_set_ssl_not_required
 
     return render_to_response(
         "logical/database/details/credentials_tab.html",
@@ -329,6 +381,120 @@ def database_configure_ssl_retry(request, context=None, database=None,
         messages.add_message(request, messages.ERROR, error)
     else:
         TaskRegister.database_configure_ssl(
+            database=database,
+            user=request.user,
+            since_step=since_step
+        )
+
+    return HttpResponseRedirect(
+        reverse(
+            'admin:logical_database_credentials',
+            kwargs={'id': database.id}
+        )
+    )
+
+
+def database_set_ssl_required(request, context, database):
+
+    can_do_ssl, error = database.can_do_set_ssl_required()
+
+    if not can_do_ssl:
+        messages.add_message(request, messages.ERROR, error)
+    else:
+        TaskRegister.database_set_ssl_required(
+            database=database,
+            user=request.user
+        )
+
+    return HttpResponseRedirect(
+        reverse(
+            'admin:logical_database_credentials',
+            kwargs={'id': database.id}
+        )
+    )
+
+
+def database_set_ssl_required_retry(request, context=None, database=None,
+                                 id=None):
+
+    if database is None:
+        database = Database.objects.get(id=id)
+
+    can_do_ssl, error = database.can_do_set_ssl_required_retry()
+
+    if can_do_ssl:
+        last_configure_ssl = database.set_require_ssl.last()
+        if not last_configure_ssl:
+            error = "Database does not have set SSL required task!"
+        elif not last_configure_ssl.is_status_error:
+            error = ("Cannot do retry, last set SSL required status "
+                     "is '{}'!").format(
+                        last_configure_ssl.get_status_display()
+            )
+        else:
+            since_step = last_configure_ssl.current_step
+
+    if error:
+        messages.add_message(request, messages.ERROR, error)
+    else:
+        TaskRegister.database_set_ssl_required(
+            database=database,
+            user=request.user,
+            since_step=since_step
+        )
+
+    return HttpResponseRedirect(
+        reverse(
+            'admin:logical_database_credentials',
+            kwargs={'id': database.id}
+        )
+    )
+
+
+def database_set_ssl_not_required(request, context, database):
+
+    can_do_ssl, error = database.can_do_set_ssl_not_required()
+
+    if not can_do_ssl:
+        messages.add_message(request, messages.ERROR, error)
+    else:
+        TaskRegister.database_set_ssl_not_required(
+            database=database,
+            user=request.user
+        )
+
+    return HttpResponseRedirect(
+        reverse(
+            'admin:logical_database_credentials',
+            kwargs={'id': database.id}
+        )
+    )
+
+
+def database_set_ssl_not_required_retry(request, context=None, database=None,
+                                 id=None):
+
+    if database is None:
+        database = Database.objects.get(id=id)
+
+    can_do_ssl, error = database.can_do_set_ssl_not_required_retry()
+
+    if can_do_ssl:
+        last_configure_ssl = database.set_not_require_ssl.last()
+        if not last_configure_ssl:
+            error = "Database does not have set SSL not required task!"
+        elif not last_configure_ssl.is_status_error:
+            error = ("Cannot do retry, last set SSL not required status "
+                     "is '{}'!").format(
+                        last_configure_ssl.get_status_display()
+            )
+        else:
+            since_step = last_configure_ssl.current_step
+
+    if error:
+        messages.add_message(request, messages.ERROR, error)
+    else:
+        TaskRegister.database_set_ssl_not_required(
             database=database,
             user=request.user,
             since_step=since_step

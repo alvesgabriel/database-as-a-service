@@ -32,6 +32,9 @@ class SSLFiles(object):
     def cert_file(self, basename):
         return basename + "-cert.pem "
 
+    def crt_file(self, basename):
+        return basename + "-cert.crt "
+
 
 class SSL(BaseInstanceStep):
 
@@ -80,6 +83,10 @@ class SSL(BaseInstanceStep):
         return self.ssl_files.cert_file(self.ssl_file_basename)
 
     @property
+    def crt_file(self):
+        return self.ssl_files.crt_file(self.ssl_file_basename)
+
+    @property
     def conf_file_path(self):
         return self.ssl_path + '/' + self.conf_file
 
@@ -102,6 +109,10 @@ class SSL(BaseInstanceStep):
     @property
     def cert_file_path(self):
         return self.ssl_path + '/' + self.cert_file
+
+    @property
+    def crt_file_path(self):
+        return self.ssl_path + '/' + self.crt_file
 
     @property
     def ssl_dns(self):
@@ -150,6 +161,20 @@ class UpdateOpenSSlLib(SSL):
             yum clean all
             yum update -y openssl
         fi
+        """
+        self.exec_script(script)
+
+
+class MongoDBUpdateCertificates(SSL):
+
+    def __unicode__(self):
+        return "Updating Certificates libraries..."
+
+    def do(self):
+        if not self.is_valid:
+            return
+        script = """yum update globoi-ca-certificates
+        yum update ca-certificates
         """
         self.exec_script(script)
 
@@ -255,6 +280,47 @@ EOF_SSL
         self.create_ssl_config_file()
 
 
+class MongoDBCreateSSLConfigFile(SSL):
+    def __unicode__(self):
+        return "Creating SSL Config File..."
+
+    def create_ssl_config_file(self):
+
+        script = """(cat <<EOF_SSL
+[req]
+distinguished_name = req_distinguished_name
+req_extensions = v3_req
+prompt = no
+[req_distinguished_name]
+C = BR
+ST = RJ
+L = Rio de Janeiro
+O = Globo Comunicacao e Participacoes SA
+OU = Data Center-Globo.com
+emailAddress = dns-tech\@corp.globo.com
+CN = {dns}
+[v3_req]
+keyUsage = keyEncipherment, dataEncipherment
+extendedKeyUsage = serverAuth, clientAuth
+subjectAltName = @alt_names
+[alt_names]
+DNS.1 = {dns}
+IP.1 = {ip}
+EOF_SSL
+) > {file_path}""".format(
+        dns=self.ssl_dns,
+        file_path=self.conf_file_path,
+        ip=self.host.address
+    )
+
+        self.exec_script(script)
+
+    def do(self):
+        if not self.is_valid:
+            return
+        self.create_ssl_config_file()
+
+
 class CreateSSLConfForInstanceDNS(CreateSSLConfigFile,
                                   InstanceSSLBaseName,
                                   InstanceSSLDNS):
@@ -270,6 +336,22 @@ class CreateSSLConfForInstanceIP(CreateSSLConfigFile,
 class CreateSSLConfForInfraEndPoint(CreateSSLConfigFile,
                                     InfraSSLBaseName,
                                     InfraSSLDNS):
+    pass
+
+
+class MongoDBCreateSSLConfForInstanceDNS(MongoDBCreateSSLConfigFile,
+                                         InstanceSSLBaseName,
+                                         InstanceSSLDNS):
+    pass
+
+class MongoDBCreateSSLConfForInfraEndPoint(MongoDBCreateSSLConfigFile,
+                                         InfraSSLBaseName,
+                                         InfraSSLDNS):
+    pass
+
+class MongoDBCreateSSLConfForInfra(MongoDBCreateSSLConfigFile,
+                                         InfraSSLBaseName,
+                                         InstanceSSLDNS):
     pass
 
 
@@ -434,7 +516,50 @@ class CreateCertificate(SSL):
         self.save_certificate_file(certificate, self.cert_file_path)
 
 
+class CreateCertificateMongoDB(CreateCertificate):
+
+    def save_mongodb_certificate(self, key_file, crt_file, ca_file, cert_file):
+        script = "cd {}\n".format(self.ssl_path)
+        script += 'cat {key_file} {crt_file} {ca_file} > {cert_file}'
+        script = script.format(
+            key_file=key_file,
+            crt_file=crt_file,
+            ca_file=ca_file,
+            cert_file=cert_file
+        )
+        self.exec_script(script)
+
+    def do(self):
+        if not self.is_valid:
+            return
+
+        script = self.create_certificate_script()
+        output = self.exec_script(script)
+        certificates = json.loads(output['stdout'][0])
+
+        ca_chain = certificates['ca_chain'][0]
+        self.save_certificate_file(ca_chain, self.ca_file_path)
+
+        certificate = certificates['certificate']
+        self.save_certificate_file(certificate, self.crt_file_path)
+
+        self.save_mongodb_certificate(
+            self.key_file_path,
+            self.crt_file_path,
+            self.ca_file_path,
+            self.cert_file_path)
+
+
 class CreateCertificateInstance(CreateCertificate, InstanceSSLBaseName):
+    pass
+
+
+class CreateCertificateInstanceMongoDB(CreateCertificateMongoDB,
+                                       InstanceSSLBaseName):
+    pass
+
+class CreateCertificateInfraMongoDB(CreateCertificateMongoDB,
+                                    InfraSSLBaseName):
     pass
 
 
@@ -471,6 +596,22 @@ class SetSSLFilesAccessMySQL(SSL):
         self.sll_file_access_script()
 
 
+class SetSSLFilesAccessMongoDB(SSL):
+    def __unicode__(self):
+        return "Setting SSL Files Access..."
+
+    def sll_file_access_script(self):
+        script = "cd {}\n".format(self.ssl_path)
+        script += "chown mongodb:mongodb *.pem\n"
+        script += "chmod 755 ."
+        self.exec_script(script)
+
+    def do(self):
+        if not self.is_valid:
+            return
+        self.sll_file_access_script()
+
+
 class SetSSLFilesAccessMySQLIfConfigured(SetSSLFilesAccessMySQL,
                                          IfConguredSSLValidator):
     pass
@@ -492,6 +633,42 @@ class SetInfraConfiguredSSL(SSL):
             return
         infra = self.infra
         infra.ssl_configured = False
+        infra.save()
+
+
+class SetInfraSSLModeAllowTLS(SSL):
+    def __unicode__(self):
+        return "Setting infra SSL Mode to allow TLS..."
+
+    def do(self):
+        if not self.is_valid:
+            return
+        infra = self.infra
+        infra.ssl_mode = infra.ALLOWTLS
+        infra.save()
+
+
+class SetInfraSSLModePreferTLS(SSL):
+    def __unicode__(self):
+        return "Setting infra SSL Mode to prefer TLS..."
+
+    def do(self):
+        if not self.is_valid:
+            return
+        infra = self.infra
+        infra.ssl_mode = infra.PREFERTLS
+        infra.save()
+
+
+class SetInfraSSLModeRequireTLS(SSL):
+    def __unicode__(self):
+        return "Setting infra SSL Mode to require TLS..."
+
+    def do(self):
+        if not self.is_valid:
+            return
+        infra = self.infra
+        infra.ssl_mode = infra.REQUIRETLS
         infra.save()
 
 
@@ -606,3 +783,38 @@ class RestoreSSLFolder4Rollback(BackupSSLFolder):
 
     def do(self):
         pass
+
+
+class SetMongoDBTSLParameter(SSL):
+    @property
+    def is_valid(self):
+        return self.instance.instance_type == self.instance.MONGODB
+
+    @property
+    def client(self):
+        return self.driver.get_client(self.instance)
+
+
+class SetMongoDBPreferTLSParameter(SetMongoDBTSLParameter):
+    def __unicode__(self):
+        return "Setting MongoDB parameters to preffer TSL..."
+
+    def do(self):
+        if not self.is_valid:
+            return
+        self.client.admin.command('setParameter', 1, tlsMode='preferTLS')
+        if self.plan.is_ha:
+            self.client.admin.command(
+                'setParameter', 1, clusterAuthMode='sendX509')
+
+class SetMongoDBRequireTLSParameter(SetMongoDBTSLParameter):
+    def __unicode__(self):
+        return "Setting MongoDB parameters to require TSL..."
+
+    def do(self):
+        if not self.is_valid:
+            return
+        self.client.admin.command('setParameter', 1, tlsMode='requireTLS')
+        if self.plan.is_ha:
+            self.client.admin.command(
+                'setParameter', 1, clusterAuthMode='x509')
