@@ -97,6 +97,7 @@ class BaseMongoDB(BaseTopology):
                 'workflow.steps.util.ssl.SetMongoDBRequireTLSParameter',
                 'workflow.steps.util.database.StopNonDatabaseInstance',
                 'workflow.steps.util.database.StartNonDatabaseInstance',
+                'workflow.steps.mongodb.database.RecreateMongoLogRotateScript',
             ),
         }] + [{
             'Enabling monitoring and alarms': (
@@ -132,6 +133,7 @@ class BaseMongoDB(BaseTopology):
                 'workflow.steps.util.database.CheckIsDown',
                 'workflow.steps.util.database.Start',
                 'workflow.steps.util.database.CheckIsUp',
+                'workflow.steps.mongodb.database.RecreateMongoLogRotateScript',
             ),
         }] + [{
             'Enabling monitoring and alarms': (
@@ -236,64 +238,94 @@ class MongoDBSingle(BaseMongoDB):
 
     def get_host_migrate_steps(self):
         return [{
-            'Migrating': (
-                ('workflow.steps.util.host_provider'
-                 '.CreateVirtualMachineMigrate'),
+            'Creating virtual machine': (
+                ('workflow.steps.util.host_provider.CreateVirtualMachineMigrate'),
+            )}, {
+            'Creating disk': (
                 'workflow.steps.util.volume_provider.NewVolume',
+            )}, {
+            'Waiting VMs': (
                 'workflow.steps.util.vm.WaitingBeReady',
                 'workflow.steps.util.vm.UpdateOSDescription',
                 'workflow.steps.util.host_provider.UpdateHostRootVolumeSize',
+            )}, {
+            'Configuring database': (
                 'workflow.steps.util.volume_provider.MountDataVolume',
                 'workflow.steps.util.plan.Initialization',
                 'workflow.steps.util.plan.Configure',
+            )}, {
+            'Check patch': (
                 ) + self.get_change_binaries_upgrade_patch_steps() + (
-                'workflow.steps.util.database.StopWithoutUndo',
-                'workflow.steps.util.database.Start',
-                'workflow.steps.util.vm.CheckAccessToMaster',
-                'workflow.steps.util.vm.CheckAccessFromMaster',
-                'workflow.steps.util.acl.ReplicateAclsMigrate',
-                'workflow.steps.util.database.Stop',
+            )}, {
+            'Configure SSL': (
+                'workflow.steps.util.ssl.UpdateOpenSSlLibIfConfigured',
+                ('workflow.steps.util.ssl.MongoDBUpdateCertificatesIfConfigured'),
+                'workflow.steps.util.ssl.CreateSSLFolderIfConfigured',
+                ('workflow.steps.util.ssl.MongoDBCreateSSLConfForInfraIPIfConfigured'),
+                'workflow.steps.util.ssl.RequestSSLForInfraIfConfigured',
+                ('workflow.steps.util.ssl.CreateJsonRequestFileInfraIfConfigured'),
+                ('workflow.steps.util.ssl.CreateCertificateInfraMongoDBIfConfigured'),
+                'workflow.steps.util.ssl.SetSSLFilesAccessMongoDBIfConfigured',
+                'workflow.steps.util.ssl.UpdateExpireAtDate',
+            )}, {
+            'Backup and restore': (
                 'workflow.steps.util.volume_provider.TakeSnapshotFromMaster',
-                ('workflow.steps.util.volume_provider'
-                 '.WaitSnapshotAvailableMigrate'),
-                'workflow.steps.util.disk.CleanDataRecreateSlave',
+                ('workflow.steps.util.volume_provider.WaitSnapshotAvailableMigrate'),
                 'workflow.steps.util.volume_provider.AddAccessRecreateSlave',
-                ('workflow.steps.util.volume_provider'
-                 '.MountDataVolumeRecreateSlave'),
+                ('workflow.steps.util.volume_provider.MountDataVolumeRecreateSlave'),
+                'workflow.steps.util.database.Stop',
+                'workflow.steps.util.database.CheckIsDown',
+                'workflow.steps.util.disk.CleanDataMigrate',
                 'workflow.steps.util.volume_provider.CopyDataFromSnapShot',
-                ('workflow.steps.util.volume_provider'
-                 '.UmountDataVolumeRecreateSlave'),
-                ('workflow.steps.util.volume_provider'
-                 '.RemoveAccessRecreateSlave'),
-                'workflow.steps.util.volume_provider.RemoveSnapshotMigrate',
                 'workflow.steps.util.disk.RemoveDeprecatedFiles',
                 'workflow.steps.util.database.Start',
                 'workflow.steps.util.database.CheckIsUp',
+                ('workflow.steps.util.volume_provider.UmountDataVolumeRecreateSlave'),
+                ('workflow.steps.util.volume_provider.RemoveAccessRecreateSlave'),
+                'workflow.steps.util.volume_provider.RemoveSnapshotMigrate',
+            )}, {
+            'Check access between instances': (
+                'workflow.steps.util.vm.CheckAccessToMaster',
+                'workflow.steps.util.vm.CheckAccessFromMaster',
+            )}, {
+            'Replicate ACL': (
+                'workflow.steps.util.acl.ReplicateAclsMigrate',
+            )}, {
+            'Stopping database': (
+                'workflow.steps.util.database.Stop',
+                'workflow.steps.util.database.StopRsyslog',
+                'workflow.steps.util.database.CheckIsDown',
+            )}, {
+            'Destroy Alarms': (
                 'workflow.steps.util.zabbix.DestroyAlarms',
+            )}, {
+            'Update and Check DNS': (
                 'workflow.steps.util.dns.ChangeEndpoint',
                 'workflow.steps.util.dns.CheckIsReady',
-                'workflow.steps.util.ssl.UpdateOpenSSlLibIfConfigured',
-                ('workflow.steps.util.ssl'
-                    '.MongoDBUpdateCertificatesIfConfigured'),
-                'workflow.steps.util.ssl.CreateSSLFolderIfConfigured',
-                ('workflow.steps.util.ssl'
-                 '.MongoDBCreateSSLConfForInfraIfConfigured'),
+            )}, {
+            'Configure SSL': (
+                ('workflow.steps.util.ssl.MongoDBCreateSSLConfForInfraIfConfigured'),
                 'workflow.steps.util.ssl.RequestSSLForInfraIfConfigured',
-                ('workflow.steps.util.ssl'
-                 '.CreateJsonRequestFileInfraIfConfigured'),
-                ('workflow.steps.util.ssl'
-                 '.CreateCertificateInfraMongoDBIfConfigured'),
+                ('workflow.steps.util.ssl.CreateJsonRequestFileInfraIfConfigured'),
+                ('workflow.steps.util.ssl.CreateCertificateInfraMongoDBIfConfigured'),
                 'workflow.steps.util.ssl.SetSSLFilesAccessMongoDBIfConfigured',
                 'workflow.steps.util.ssl.UpdateExpireAtDate',
+            )}, {
+            'Starting database': (
+                'workflow.steps.util.database.Start',
+                'workflow.steps.util.database.CheckIsUp',
+                'workflow.steps.util.database.StartRsyslog',
                 'workflow.steps.util.metric_collector.ConfigureTelegraf',
                 'workflow.steps.util.metric_collector.RestartTelegraf',
+            )}, {
+            'Recreate Alarms': (
                 'workflow.steps.util.zabbix.CreateAlarms',
-                ('workflow.steps.util.db_monitor'
-                 '.UpdateInfraCloudDatabaseMigrate'),
+                ('workflow.steps.util.db_monitor.UpdateInfraCloudDatabaseMigrate'),
+            )}, {
+            'Cleaning up': (
                 'workflow.steps.util.disk.ChangeSnapshotOwner',
                 'workflow.steps.util.volume_provider.DestroyOldEnvironment',
-                ('workflow.steps.util.host_provider'
-                 '.DestroyVirtualMachineMigrate'),
+                ('workflow.steps.util.host_provider.DestroyVirtualMachineMigrate'),
             )}]
 
     def get_clone_steps(self):
@@ -367,7 +399,7 @@ class MongoDBSingle(BaseMongoDB):
             'Restoring': (
                 'workflow.steps.util.volume_provider.RestoreSnapshot',
             )}, {
-            'Stopping datbase': (
+            'Stopping database': (
                 'workflow.steps.util.database.Stop',
                 'workflow.steps.util.database.StopRsyslog',
                 'workflow.steps.util.database.CheckIsDown',
@@ -698,7 +730,7 @@ class MongoDBReplicaset(BaseMongoDB):
             'Restoring': (
                 'workflow.steps.util.volume_provider.RestoreSnapshot',
             )}, {
-            'Stopping datbase': (
+            'Stopping database': (
                 'workflow.steps.util.database.Stop',
                 'workflow.steps.util.database.StopRsyslog',
                 'workflow.steps.util.database.CheckIsDown',
@@ -775,86 +807,113 @@ class MongoDBReplicaset(BaseMongoDB):
             )
         }]
 
-    def get_host_migrate_steps_cleaning_up(self):
-        return (
-            'workflow.steps.mongodb.database.RemoveInstanceFromReplicaSet',
-            'workflow.steps.util.volume_provider.DestroyOldEnvironment',
-            'workflow.steps.util.host_provider.DestroyVirtualMachineMigrate',
-        )
-
-    def get_base_host_migrate_steps(self):
-        return (
-            'workflow.steps.util.vm.ChangeMaster',
-            'workflow.steps.util.database.CheckIfSwitchMaster',
-            'workflow.steps.util.host_provider.CreateVirtualMachineMigrate',
-            'workflow.steps.util.volume_provider.NewVolume',
-            'workflow.steps.util.vm.WaitingBeReady',
-            'workflow.steps.util.vm.UpdateOSDescription',
-            'workflow.steps.util.host_provider.UpdateHostRootVolumeSize',
-            'workflow.steps.util.volume_provider.MountDataVolume',
-            'workflow.steps.util.plan.Initialization',
-            'workflow.steps.util.plan.Configure',
-            ) + self.get_change_binaries_upgrade_patch_steps() + (
-            'workflow.steps.util.database.StopWithoutUndo',
-            'workflow.steps.util.database.Start',
-            'workflow.steps.util.vm.CheckAccessToMaster',
-            'workflow.steps.util.vm.CheckAccessFromMaster',
-            'workflow.steps.util.acl.ReplicateAclsMigrate',
-            'workflow.steps.mongodb.database.AddInstanceToReplicaSet',
-            'workflow.steps.util.database.Stop',
-            'workflow.steps.util.volume_provider.TakeSnapshotFromMaster',
-            ('workflow.steps.util.volume_provider'
-             '.WaitSnapshotAvailableMigrate'),
-            'workflow.steps.util.disk.CleanDataRecreateSlave',
-            'workflow.steps.util.volume_provider.AddAccessRecreateSlave',
-            ('workflow.steps.util.volume_provider'
-             '.MountDataVolumeRecreateSlave'),
-            'workflow.steps.util.volume_provider.CopyDataFromSnapShot',
-            ('workflow.steps.util.volume_provider'
-             '.UmountDataVolumeRecreateSlave'),
-            ('workflow.steps.util.volume_provider'
-             '.RemoveAccessRecreateSlave'),
-            'workflow.steps.util.volume_provider.RemoveSnapshotMigrate',
-            'workflow.steps.util.disk.RemoveDeprecatedFiles',
-            'workflow.steps.util.database.Start',
-            'workflow.steps.util.database.CheckIsUp',
-            'workflow.steps.util.database.WaitForReplication',
-            'workflow.steps.mongodb.database.SetNotEligible',
-            'workflow.steps.util.zabbix.DestroyAlarms',
-            'workflow.steps.util.dns.ChangeEndpoint',
-            'workflow.steps.util.dns.CheckIsReady',
-            'workflow.steps.util.ssl.UpdateOpenSSlLibIfConfigured',
-            'workflow.steps.util.ssl.MongoDBUpdateCertificatesIfConfigured',
-            'workflow.steps.util.ssl.CreateSSLFolderIfConfigured',
-            ('workflow.steps.util.ssl'
-             '.MongoDBCreateSSLConfForInfraIfConfigured'),
-            'workflow.steps.util.ssl.RequestSSLForInfraIfConfigured',
-            ('workflow.steps.util.ssl'
-             '.CreateJsonRequestFileInfraIfConfigured'),
-            ('workflow.steps.util.ssl'
-             '.CreateCertificateInfraMongoDBIfConfigured'),
-            'workflow.steps.util.ssl.SetSSLFilesAccessMongoDBIfConfigured',
-            'workflow.steps.util.ssl.UpdateExpireAtDate',
-            'workflow.steps.util.metric_collector.ConfigureTelegraf',
-            'workflow.steps.util.metric_collector.RestartTelegraf',
-            'workflow.steps.util.zabbix.CreateAlarms',
-            'workflow.steps.util.db_monitor.UpdateInfraCloudDatabaseMigrate',
-            'workflow.steps.util.disk.ChangeSnapshotOwner',
-        )
-
     def get_host_migrate_steps(self):
         return [{
-            'Migrating':
-                self.get_base_host_migrate_steps() +
-                self.get_host_migrate_steps_cleaning_up()
-        }]
+            'Switch Master': (
+                'workflow.steps.util.vm.ChangeMaster',
+                'workflow.steps.util.database.CheckIfSwitchMaster',
+            )}, {
+            'Creating virtual machine': (
+                ('workflow.steps.util.host_provider.CreateVirtualMachineMigrate'),
+            )}, {
+            'Creating disk': (
+                'workflow.steps.util.volume_provider.NewVolume',
+            )}, {
+            'Waiting VMs': (
+                'workflow.steps.util.vm.WaitingBeReady',
+                'workflow.steps.util.vm.UpdateOSDescription',
+                'workflow.steps.util.host_provider.UpdateHostRootVolumeSize',
+            )}, {
+            'Configuring database': (
+                'workflow.steps.util.volume_provider.MountDataVolume',
+                'workflow.steps.util.plan.Initialization',
+                'workflow.steps.util.plan.Configure',
+            )}, {
+            'Check patch': (
+                ) + self.get_change_binaries_upgrade_patch_steps() + (
+            )}, {
+            'Configure SSL': (
+                'workflow.steps.util.ssl.UpdateOpenSSlLibIfConfigured',
+                ('workflow.steps.util.ssl.MongoDBUpdateCertificatesIfConfigured'),
+                'workflow.steps.util.ssl.CreateSSLFolderIfConfigured',
+                ('workflow.steps.util.ssl.MongoDBCreateSSLConfForInfraIPIfConfigured'),
+                'workflow.steps.util.ssl.RequestSSLForInfraIfConfigured',
+                ('workflow.steps.util.ssl.CreateJsonRequestFileInfraIfConfigured'),
+                ('workflow.steps.util.ssl.CreateCertificateInfraMongoDBIfConfigured'),
+                'workflow.steps.util.ssl.SetSSLFilesAccessMongoDBIfConfigured',
+                'workflow.steps.util.ssl.UpdateExpireAtDate',
+            )}, {
+            'Check access between instances': (
+                'workflow.steps.util.database.Stop',
+                'workflow.steps.util.database.Start',
+                'workflow.steps.util.vm.CheckAccessToMaster',
+                'workflow.steps.util.vm.CheckAccessFromMaster',
+            )}, {
+            'Replicate ACL': (
+                'workflow.steps.util.acl.ReplicateAclsMigrate',
+            )}, {
+            'Backup and restore': (
+                'workflow.steps.mongodb.database.AddInstanceToReplicaSet',
+                'workflow.steps.util.database.Stop',
+                'workflow.steps.util.database.CheckIsDown',
+                'workflow.steps.util.volume_provider.TakeSnapshotFromMaster',
+                ('workflow.steps.util.volume_provider.WaitSnapshotAvailableMigrate'),
+                'workflow.steps.util.volume_provider.AddAccessRecreateSlave',
+                ('workflow.steps.util.volume_provider.MountDataVolumeRecreateSlave'),
+                'workflow.steps.util.disk.CleanDataRecreateSlave',
+                'workflow.steps.util.volume_provider.CopyDataFromSnapShot',
+                'workflow.steps.util.disk.RemoveDeprecatedFiles',
+                'workflow.steps.util.database.Start',
+                'workflow.steps.util.database.CheckIsUp',
+                ('workflow.steps.util.volume_provider.UmountDataVolumeRecreateSlave'),
+                ('workflow.steps.util.volume_provider.RemoveAccessRecreateSlave'),
+                'workflow.steps.util.volume_provider.RemoveSnapshotMigrate',
+                'workflow.steps.util.database.WaitForReplication',
+                'workflow.steps.mongodb.database.SetNotEligible',
+            )}, {
+            'Stopping database': (
+                'workflow.steps.util.database.Stop',
+                'workflow.steps.util.database.StopRsyslog',
+                'workflow.steps.util.database.CheckIsDown',
+            )}, {
+            'Destroy Alarms': (
+                'workflow.steps.util.zabbix.DestroyAlarms',
+            )}, {
+            'Update and Check DNS': (
+                'workflow.steps.util.dns.ChangeEndpoint',
+                'workflow.steps.util.dns.CheckIsReady',
+            )}, {
+            'Configure SSL': (
+                ('workflow.steps.util.ssl.MongoDBCreateSSLConfForInfraIfConfigured'),
+                'workflow.steps.util.ssl.RequestSSLForInfraIfConfigured',
+                ('workflow.steps.util.ssl.CreateJsonRequestFileInfraIfConfigured'),
+                ('workflow.steps.util.ssl.CreateCertificateInfraMongoDBIfConfigured'),
+                'workflow.steps.util.ssl.SetSSLFilesAccessMongoDBIfConfigured',
+                'workflow.steps.util.ssl.UpdateExpireAtDate',
+            )}, {
+            'Starting database': (
+                'workflow.steps.util.database.Start',
+                'workflow.steps.util.database.CheckIsUp',
+                'workflow.steps.util.database.StartRsyslog',
+                'workflow.steps.util.metric_collector.ConfigureTelegraf',
+                'workflow.steps.util.metric_collector.RestartTelegraf',
+            )}, {
+            'Recreate Alarms': (
+                'workflow.steps.util.zabbix.CreateAlarms',
+                ('workflow.steps.util.db_monitor.UpdateInfraCloudDatabaseMigrate'),
+            )}, {
+            'Cleaning up': (
+                'workflow.steps.util.database.StartNonDatabaseInstanceRollback',
+                'workflow.steps.mongodb.database.RemoveInstanceFromReplicaSet',
+                'workflow.steps.util.disk.CleanDataNonDatabaseInstanceRollback',
+                'workflow.steps.util.database.StopNonDatabaseInstanceRollback',
+                'workflow.steps.util.disk.ChangeSnapshotOwner',
+                'workflow.steps.util.volume_provider.DestroyOldEnvironment',
+                ('workflow.steps.util.host_provider.DestroyVirtualMachineMigrate'),
+            )}]
 
     def get_database_migrate_steps(self):
-        return [{
-            'Migrating': self.get_base_host_migrate_steps()
-        }, {
-            'Cleaning up': self.get_host_migrate_steps_cleaning_up()
-        }]
+        return self.get_host_migrate_steps()
 
     def get_change_binaries_upgrade_patch_steps(self):
         return (
