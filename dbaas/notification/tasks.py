@@ -13,7 +13,7 @@ from account.models import Team
 from logical.models import Database
 from physical.models import Plan, DatabaseInfra, Instance
 from util import email_notifications, get_worker_name
-from util.decorators import only_one
+from util.decorators import only_one, lock_execution
 from util import providers as util_providers
 from system.models import Configuration
 from notification.models import TaskHistory
@@ -636,7 +636,7 @@ def send_mail_24hours_before_auto_task(self):
 
 
 @app.task(bind=True)
-@only_one(key="checksslexpireattask")
+@lock_execution(key="checksslexpireattask")
 def check_ssl_expire_at(self):
     #LOG.info("Retrieving all SSL MySQL databases")
     today = date.today()
