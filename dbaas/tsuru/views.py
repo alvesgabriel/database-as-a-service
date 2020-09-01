@@ -257,6 +257,7 @@ class ServiceAdd(APIView):
     def post(self, request, format=None):
         data = request.DATA
         LOG.info("Tsuru Data: {}".format(data))
+        raise Exception("O_O")
         name = data['name']
         user = data['user']
         team = data['team']
