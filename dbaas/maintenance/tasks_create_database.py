@@ -61,16 +61,14 @@ def get_instances_for(infra, topology_path):
                 instance = infra.instances.get(
                     Q(hostname__hostname__startswith=instance_name) |
                     Q(dns__startswith=instance_name),
-                    # port=instance_type.port,
+                    port=instance_type.port,
                 )
             except Instance.DoesNotExist:
                 instance = Instance()
                 instance.dns = instance_name
                 instance.databaseinfra = infra
-
                 instance.port = instance_type.port
                 instance.instance_type = instance_type.instance_type
-
             instance.vm_name = instance.dns
             instances.append(instance)
 
