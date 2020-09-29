@@ -44,23 +44,64 @@ class Offering(BaseModel):
 
 
 class Environment(BaseModel):
+
+    DEV = 1
+    PROD = 2
+    STAGE_CHOICES = (
+        (DEV, 'Dev'),
+        (PROD, 'Prod'),
+    )
+
+    CLOUDSTACK = 1
+    AWS = 2
+    KUBERNETES = 3
+
+    PROVISIONER_CHOICES = (
+        (CLOUDSTACK, 'Cloud Stack'),
+        (AWS, 'AWS'),
+        (KUBERNETES, 'Kubernetes'),
+    )
+
     name = models.CharField(
         verbose_name=_("Environment"), max_length=100, unique=True)
     min_of_zones = models.PositiveIntegerField(default=1)
-
     migrate_environment = models.ForeignKey(
         'Environment', related_name='migrate_to', blank=True, null=True
     )
-
     cloud = models.ForeignKey(
         'Cloud', related_name='environment_cloud',
         unique=False, null=False, blank=False, on_delete=models.PROTECT)
+    stage = models.IntegerField(choices=STAGE_CHOICES, default=DEV)
+    provisioner = models.IntegerField(
+        choices=PROVISIONER_CHOICES, default=CLOUDSTACK
+    )
 
     def __unicode__(self):
         return '%s' % (self.name)
 
     def active_plans(self):
         return self.plans.filter(is_active=True)
+
+    @classmethod
+    def prod_envs(cls):
+        envs = []
+        for env in Environment.objects.filter(stage=cls.PROD):
+            envs.append(env.name)
+        return envs
+
+    @classmethod
+    def dev_envs(cls):
+        envs = []
+        for env in Environment.objects.filter(stage=cls.DEV):
+            envs.append(env.name)
+        return envs
+
+    @classmethod
+    def k8s_envs(cls):
+        envs = []
+        for env in Environment.objects.filter(provisioner=cls.KUBERNETES):
+            envs.append(env.name)
+        return envs
 
 
 class EnvironmentGroup(BaseModel):
